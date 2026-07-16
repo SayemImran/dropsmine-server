@@ -24,7 +24,7 @@ async function requireAdmin(req: AuthedRequest, res: Response, next: NextFunctio
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing or malformed Authorization header.' });
+    return res.status(401).json({ error: 'You must be logged in to do that.' });
   }
 
   const token = authHeader.slice('Bearer '.length).trim();
@@ -37,14 +37,14 @@ async function requireAdmin(req: AuthedRequest, res: Response, next: NextFunctio
     const decoded = payload as AuthPayload;
 
     if (decoded.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required.' });
+      return res.status(403).json({ error: 'Only admins can perform this action.' });
     }
 
     req.user = decoded;
     return next();
   } catch (error) {
     console.error('JWT verification failed:', error);
-    return res.status(401).json({ error: 'Invalid or expired token.' });
+    return res.status(401).json({ error: 'Your session has expired. Please log in again.' });
   }
 }
 
@@ -60,7 +60,10 @@ interface Product {
 }
 
 const app = express();
-app.use(cors());
+
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000').split(',');
+
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
 const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
@@ -74,6 +77,26 @@ const client = new MongoClient(uri, {
 
 const db = client.db('dropsmine_db');
 const productsCollection = db.collection<Product>('products');
+
+let isConnected = false;
+
+async function ensureDbConnected() {
+  if (!isConnected) {
+    await client.connect();
+    isConnected = true;
+    console.log('Connected to MongoDB successfully.');
+  }
+}
+
+app.use(async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    await ensureDbConnected();
+    next();
+  } catch (error) {
+    console.error('MongoDB connection failed:', error);
+    res.status(500).json({ error: 'Database connection failed.' });
+  }
+});
 
 function serializeProduct(product: Product) {
   return {
@@ -148,7 +171,7 @@ app.post('/products', requireAdmin, async (req: Request, res: Response) => {
 
 app.get('/products/:id', async (req: Request, res: Response) => {
   try {
-    const product = await productsCollection.findOne({ _id: new ObjectId(req.params.id) });
+    const product = await productsCollection.findOne({ _id: new ObjectId(String(req.params.id)) });
 
     if (!product) {
       return res.status(404).json({ error: 'Product not found.' });
@@ -215,8 +238,8 @@ app.put('/products/:id', requireAdmin, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No valid fields provided.' });
     }
 
-    await productsCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: updates });
-    const updatedProduct = await productsCollection.findOne({ _id: new ObjectId(req.params.id) });
+    await productsCollection.updateOne({ _id: new ObjectId(String(req.params.id)) }, { $set: updates });
+    const updatedProduct = await productsCollection.findOne({ _id: new ObjectId(String(req.params.id)) });
 
     if (!updatedProduct) {
       return res.status(404).json({ error: 'Product not found.' });
@@ -283,8 +306,8 @@ app.patch('/products/:id', requireAdmin, async (req: Request, res: Response) => 
       return res.status(400).json({ error: 'No valid fields provided.' });
     }
 
-    await productsCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: updates });
-    const updatedProduct = await productsCollection.findOne({ _id: new ObjectId(req.params.id) });
+    await productsCollection.updateOne({ _id: new ObjectId(String(req.params.id)) }, { $set: updates });
+    const updatedProduct = await productsCollection.findOne({ _id: new ObjectId(String(req.params.id)) });
 
     if (!updatedProduct) {
       return res.status(404).json({ error: 'Product not found.' });
@@ -299,7 +322,7 @@ app.patch('/products/:id', requireAdmin, async (req: Request, res: Response) => 
 
 app.delete('/products/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const result = await productsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+    const result = await productsCollection.deleteOne({ _id: new ObjectId(String(req.params.id)) });
 
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: 'Product not found.' });
@@ -312,19 +335,18 @@ app.delete('/products/:id', requireAdmin, async (req: Request, res: Response) =>
   }
 });
 
-const port = Number(process.env.PORT) || 8000;
+export default app;
 
-async function startServer() {
-  try {
-    await client.connect();
-    console.log('Connected to MongoDB successfully.');
-    app.listen(port, () => {
-      console.log(`CRUD server running on http://localhost:${port}`);
+if (process.env.NODE_ENV !== 'production') {
+  const port = Number(process.env.PORT) || 8000;
+  ensureDbConnected()
+    .then(() => {
+      app.listen(port, () => {
+        console.log(`CRUD server running on http://localhost:${port}`);
+      });
+    })
+    .catch((error) => {
+      console.error('MongoDB connection failed:', error);
+      process.exit(1);
     });
-  } catch (error) {
-    console.error('MongoDB connection failed:', error);
-    process.exit(1);
-  }
 }
-
-startServer();
