@@ -111,8 +111,8 @@ function serializeProduct(product: Product) {
   };
 }
 
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok' });
+app.get('/', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', message: 'Dropsmine API is running.' });
 });
 
 app.get('/products', async (_req: Request, res: Response) => {
