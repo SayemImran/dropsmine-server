@@ -61,7 +61,7 @@ interface Product {
 
 const app = express();
 
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000').split(',');
+const allowedOrigins = (process.env.BETTER_AUTH_URL || 'http://localhost:3000').split(',');
 
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
